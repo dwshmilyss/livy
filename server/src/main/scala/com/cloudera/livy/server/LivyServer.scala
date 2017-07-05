@@ -18,30 +18,30 @@
 
 package com.cloudera.livy.server
 
-import java.util.concurrent._
+import java.io.{BufferedInputStream, InputStream}
 import java.util.EnumSet
+import java.util.concurrent._
 import javax.servlet._
-
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.Future
-
-import org.apache.hadoop.security.{SecurityUtil, UserGroupInformation}
-import org.apache.hadoop.security.authentication.server._
-import org.eclipse.jetty.servlet.FilterHolder
-import org.scalatra.metrics.MetricsBootstrap
-import org.scalatra.metrics.MetricsSupportExtensions._
-import org.scalatra.ScalatraServlet
-import org.scalatra.servlet.{MultipartConfig, ServletApiImplicits}
 
 import com.cloudera.livy._
 import com.cloudera.livy.server.batch.BatchSessionServlet
 import com.cloudera.livy.server.interactive.InteractiveSessionServlet
 import com.cloudera.livy.server.recovery.{SessionStore, StateStore}
 import com.cloudera.livy.server.ui.UIServlet
-import com.cloudera.livy.sessions.{BatchSessionManager, InteractiveSessionManager}
 import com.cloudera.livy.sessions.SessionManager.SESSION_RECOVERY_MODE_OFF
+import com.cloudera.livy.sessions.{BatchSessionManager, InteractiveSessionManager}
 import com.cloudera.livy.utils.LivySparkUtils._
 import com.cloudera.livy.utils.SparkYarnApp
+import org.apache.hadoop.security.authentication.server._
+import org.apache.hadoop.security.{SecurityUtil, UserGroupInformation}
+import org.eclipse.jetty.servlet.FilterHolder
+import org.scalatra.{NotFound, ScalatraServlet}
+import org.scalatra.metrics.MetricsBootstrap
+import org.scalatra.metrics.MetricsSupportExtensions._
+import org.scalatra.servlet.{MultipartConfig, ServletApiImplicits}
+
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 
 class LivyServer extends Logging {
 
@@ -61,8 +61,8 @@ class LivyServer extends Logging {
     val host = livyConf.get(SERVER_HOST)
     val port = livyConf.getInt(SERVER_PORT)
     val multipartConfig = MultipartConfig(
-        maxFileSize = Some(livyConf.getLong(LivyConf.FILE_UPLOAD_MAX_SIZE))
-      ).toMultipartConfigElement
+      maxFileSize = Some(livyConf.getLong(LivyConf.FILE_UPLOAD_MAX_SIZE))
+    ).toMultipartConfigElement
 
     // Make sure the `spark-submit` program exists, otherwise much of livy won't work.
     testSparkHome(livyConf)
@@ -120,7 +120,9 @@ class LivyServer extends Logging {
     // Initialize YarnClient ASAP to save time.
     if (livyConf.isRunningOnYarn()) {
       SparkYarnApp.init(livyConf)
-      Future { SparkYarnApp.yarnClient }
+      Future {
+        SparkYarnApp.yarnClient
+      }
     }
 
     StateStore.init(livyConf)
@@ -132,7 +134,9 @@ class LivyServer extends Logging {
     server.context.setResourceBase("src/main/com/cloudera/livy/server")
 
     val livyVersionServlet = new JsonServlet {
-      before() { contentType = "application/json" }
+      before() {
+        contentType = "application/json"
+      }
 
       get("/") {
         Map("version" -> LIVY_VERSION,
@@ -146,9 +150,21 @@ class LivyServer extends Logging {
 
     // Servlet for hosting static files such as html, css, and js
     // Necessary since Jetty cannot set it's resource base inside a jar
+    // Returns 404 if the file does not exist
     val staticResourceServlet = new ScalatraServlet {
       get("/*") {
-        getClass.getResourceAsStream("ui/static/" + params("splat"))
+        //        getClass.getResourceAsStream("ui/static/" + params("splat"))
+        val fileName = params("splat")
+        val notFoundMsg = "File not found"
+
+        if (!fileName.isEmpty) {
+          getClass.getResourceAsStream(s"ui/static/$fileName") match {
+            case is: InputStream => new BufferedInputStream(is)
+            case null => NotFound(notFoundMsg)
+          }
+        } else {
+          NotFound(notFoundMsg)
+        }
       }
     }
 
@@ -205,7 +221,7 @@ class LivyServer extends Logging {
       })
 
     livyConf.get(AUTH_TYPE) match {
-      case authType @ KerberosAuthenticationHandler.TYPE =>
+      case authType@KerberosAuthenticationHandler.TYPE =>
         val principal = SecurityUtil.getServerPrincipal(livyConf.get(AUTH_KERBEROS_PRINCIPAL),
           server.host)
         val keytab = livyConf.get(AUTH_KERBEROS_KEYTAB)
@@ -223,8 +239,8 @@ class LivyServer extends Logging {
         server.context.addFilter(holder, "/*", EnumSet.allOf(classOf[DispatcherType]))
         info(s"SPNEGO auth enabled (principal = $principal)")
 
-     case null =>
-        // Nothing to do.
+      case null =>
+      // Nothing to do.
 
       case other =>
         throw new IllegalArgumentException(s"Invalid auth type: $other")
